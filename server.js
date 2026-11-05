@@ -12,7 +12,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // public klasöründeki dosyaları (index.html, game.js, demo.html) doğrudan sun
-app.use(express.static(path.join(__dirname, 'public')));
+const ROOT = require('fs').existsSync(path.join(__dirname, 'public')) ? path.join(__dirname, 'public') : __dirname; app.use(express.static(ROOT));
 
 // Kendi bilgisayarına / yerel ağa istek atılmasın diye basit bir koruma
 function isPrivateHost(hostname) {
