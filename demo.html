@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Demo Sayfa</title>
+<style>
+  body { font-family: Georgia, serif; max-width: 820px; margin: 40px auto; padding: 0 20px; color: #222; background:#fafaf5; }
+  header { display:flex; gap:16px; align-items:center; border-bottom:2px solid #ddd; padding-bottom:12px; }
+  nav a { margin-right: 14px; color:#0a58ca; }
+  .card { background:#fff; border:1px solid #ddd; border-radius:10px; padding:16px; margin:18px 0; }
+  .btn { background:#e85d04; color:#fff; border:0; padding:10px 18px; border-radius:8px; font-size:15px; }
+  .grid { display:grid; grid-template-columns: repeat(3,1fr); gap:12px; }
+  .grid div { background:#ffd166; height:80px; border-radius:8px; display:grid; place-items:center; font-weight:bold; }
+</style>
+</head>
+<body>
+  <header><h1>WoodWLove Demo</h1><nav><a href="#">Ana sayfa</a><a href="#">Ürünler</a><a href="#">İletişim</a></nav></header>
+  <div class="card"><h2>Ahşap Lamba</h2><p>Lazer kesim ahşaptan el yapımı gece lambası. Bu kutuyu yıkmak için önce yazıları vur.</p><button class="btn">Sepete ekle</button></div>
+  <div class="grid"><div>Kutu 1</div><div>Kutu 2</div><div>Kutu 3</div></div>
+  <div class="card"><h2>Neden yıkılabilir?</h2><p>Oyun her paragrafı, başlığı ve butonu bir platforma çeviriyor. Mermiler bu dikdörtgenlere çarpınca hasar veriyor.</p><p>Bombayı (2) ve roketi (3) de dene.</p></div>
+  <ul class="card"><li>Madde bir</li><li>Madde iki</li><li>Madde üç</li></ul>
+  <p style="height:300px">Aşağıda biraz boşluk var, jetpack (Shift) ile uç.</p>
+  <footer><p>© 2026 Demo</p></footer>
+  <script src="/game.js"></script>
+</body>
+</html>

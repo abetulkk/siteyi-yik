@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Siteyi Yık!</title>
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:#111; color:#fff; font-family:system-ui,sans-serif; }
+  .box { text-align:center; padding:24px; }
+  h1 { font-size:56px; margin:0 0 8px; letter-spacing:-1px; }
+  p { color:#aaa; margin:0 0 28px; }
+  form { display:flex; gap:8px; justify-content:center; }
+  input { width:340px; padding:14px 16px; font-size:16px; border-radius:10px; border:2px solid #333; background:#1c1c1c; color:#fff; }
+  button { padding:14px 22px; font-size:16px; font-weight:700; border:0; border-radius:10px; background:#ff3b30; color:#fff; cursor:pointer; }
+  .quick { margin-top:18px; font-size:14px; }
+  .quick a { color:#ffcc00; margin:0 8px; }
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1>💥 Siteyi Yık!</h1>
+    <p>Bir web adresi yapıştır, çöp adamla paramparça et.</p>
+    <!-- Form, /play?url=... adresine gider. Sunucu siteyi çekip oyunu içine koyar. -->
+    <form action="/play" method="get">
+      <input name="url" placeholder="ornek: tr.wikipedia.org" required autofocus>
+      <button type="submit">YIK</button>
+    </form>
+    <div class="quick">
+      Dene: <a href="/demo.html">Demo sayfası</a>
+      <a href="/play?url=https://tr.wikipedia.org/wiki/Eskişehir">Wikipedia</a>
+      <a href="/play?url=https://example.com">example.com</a>
+    </div>
+  </div>
+</body>
+</html>
