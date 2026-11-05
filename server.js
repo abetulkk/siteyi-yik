@@ -58,7 +58,7 @@ app.get('/play', async (req, res) => {
 
     // ADIM 4: <base> ekle → resimler/CSS orijinal siteden yüklenir
     //         <script> ekle → oyunumuz sayfanın içine girer
-    const self = `${req.protocol}://${req.get('host')}`;
+    const self = '//' + req.get('host'); // http/https otomatik
     const safeUrl = finalUrl.replace(/"/g, '&quot;');
     const inject = `<base href="${safeUrl}"><script src="${self}/game.js" defer></script>`;
 
