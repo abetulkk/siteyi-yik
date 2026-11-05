@@ -9,11 +9,13 @@
   .box { text-align:center; padding:24px; }
   h1 { font-size:56px; margin:0 0 8px; letter-spacing:-1px; }
   p { color:#aaa; margin:0 0 28px; }
-  form { display:flex; gap:8px; justify-content:center; }
-  input { width:340px; padding:14px 16px; font-size:16px; border-radius:10px; border:2px solid #333; background:#1c1c1c; color:#fff; }
+  form { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; }
+  input { width:340px; max-width:calc(100vw - 48px); box-sizing:border-box; padding:14px 16px; font-size:16px; border-radius:10px; border:2px solid #333; background:#1c1c1c; color:#fff; }
   button { padding:14px 22px; font-size:16px; font-weight:700; border:0; border-radius:10px; background:#ff3b30; color:#fff; cursor:pointer; }
   .quick { margin-top:18px; font-size:14px; }
-  .quick a { color:#ffcc00; margin:0 8px; }
+  .quick a { color:#ffcc00; margin:0 8px; display:inline-block; padding:6px 0; }
+  @media (max-width: 520px) { h1 { font-size:38px; } button { width:calc(100vw - 48px); } }
+  .mobile-note { margin-top:22px; font-size:13px; color:#888; max-width:420px; }
 </style>
 </head>
 <body>
@@ -30,6 +32,7 @@
       <a href="/play?url=https://tr.wikipedia.org/wiki/Eskişehir">Wikipedia</a>
       <a href="/play?url=https://example.com">example.com</a>
     </div>
+    <p class="mobile-note">📱 Telefonda: butonlarla yürü ve zıpla, ekrana dokunup basılı tutarak ateş et.<br>Not: X ve Instagram gibi uygulama tarzı siteler burada tam açılmaz; Wikipedia ve haber siteleri en iyi sonucu verir.</p>
   </div>
 </body>
 </html>

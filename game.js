@@ -705,6 +705,7 @@
     for (const t of thrown) drawItem(t.o, t.x - ox, t.y - oy, t.rot);
     if (!P.dead && !(P.inv > 0 && Math.floor(P.inv * 10) % 2)) drawPlayer(ox, oy); // hasar alınca yanıp söner
     drawHUD();
+    drawTouchUI();
     if (P.dead) drawGameOver();
   }
 
@@ -724,6 +725,8 @@
   }
 
   function drawHUD() {
+    ctx.save();
+    const hs = Math.min(1, W / 520); if (hs < 1) ctx.scale(hs, hs); // küçük ekranda HUD küçülür
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = 'rgba(20,20,35,.85)'; ctx.fillRect(10, 10, 360, 132);
     ctx.font = 'bold 13px ui-monospace, Menlo, monospace';
@@ -741,8 +744,14 @@
     for (let i = 0; i < 5; i++) drawHeart(20 + i * 20, 80, i < P.hp);
     ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#bbb';
     ctx.fillText(`Düşman: ${enemies.length}`, 130, 91);
-    ctx.fillText('←→ / A D yürü · ↑ / W zıpla · ↓ / S in', 20, 116);
-    ctx.fillText('Shift jetpack · Fare nişan+ateş · ESC çık', 20, 132);
+    if (isTouch) {
+      ctx.fillText('Butonlarla yürü/zıpla · SİLAH ile değiştir', 20, 116);
+      ctx.fillText('Ekrana dokun, basılı tut: nişan + ateş', 20, 132);
+    } else {
+      ctx.fillText('←→ / A D yürü · ↑ / W zıpla · ↓ / S in', 20, 116);
+      ctx.fillText('Shift jetpack · Fare nişan+ateş · ESC çık', 20, 132);
+    }
+    ctx.restore();
   }
 
 
@@ -1032,18 +1041,89 @@
   function drawGameOver() {
     ctx.fillStyle = 'rgba(10,10,25,.7)'; ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 56px ui-monospace, Menlo, monospace';
+    ctx.font = `bold ${Math.min(56, W / 7)}px ui-monospace, Menlo, monospace`;
     ctx.fillStyle = '#1b1b2f'; ctx.fillText('KAYBETTİN!', W / 2 + 4, H / 2 - 36);
     ctx.fillStyle = '#e63946'; ctx.fillText('KAYBETTİN!', W / 2, H / 2 - 40);
     ctx.font = 'bold 20px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#ffd166';
     ctx.fillText(`Puan: ${score}`, W / 2, H / 2 + 10);
     ctx.fillStyle = '#fff'; ctx.font = '16px ui-monospace, Menlo, monospace';
-    ctx.fillText('Yeniden başlamak için R tuşuna bas', W / 2, H / 2 + 44);
+    ctx.fillText(isTouch ? 'Yeniden başlamak için ekrana dokun' : 'Yeniden başlamak için R tuşuna bas', W / 2, H / 2 + 44);
   }
 
   function restart() {
     Object.assign(P, { hp: 5, dead: false, inv: 1.5, x: scrollX + W / 2, y: scrollY + 80, vx: 0, vy: 0, fuel: 100 });
     enemies.length = 0; thrown.length = 0; bombs.length = 0; singularities.length = 0; spawnT = 1.5; score = 0;
+  }
+
+
+  // ---------------- J) TELEFON / DOKUNMATİK KONTROLLER ----------------
+  // Dokunmatik ekranda butonlar çıkar. Butona dokunmak = o tuşa basmak.
+  // Butonların dışına dokunup basılı tutmak = oraya nişan al + ateş et.
+  const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  const touchOwners = new Map(); // dokunuş id → buton adı ya da 'aim'
+  function touchButtons() {
+    const s = Math.min(1.15, Math.max(.8, Math.min(W, H) / 420)); // ekran boyuna göre büyüklük
+    return [
+      { id: 'left',  key: 'arrowleft',  x: 58 * s,      y: H - 70 * s,  r: 34 * s, label: '◀' },
+      { id: 'right', key: 'arrowright', x: 142 * s,     y: H - 70 * s,  r: 34 * s, label: '▶' },
+      { id: 'down',  key: 'arrowdown',  x: 100 * s,     y: H - 148 * s, r: 24 * s, label: '▼' },
+      { id: 'jump',  key: 'arrowup',    x: W - 64 * s,  y: H - 78 * s,  r: 38 * s, label: 'ZIPLA' },
+      { id: 'jet',   key: 'shift',      x: W - 156 * s, y: H - 58 * s,  r: 30 * s, label: 'JET' },
+      { id: 'weap',  key: null,         x: W - 64 * s,  y: H - 178 * s, r: 30 * s, label: 'SİLAH' },
+      { id: 'quit',  key: null,         x: W - 26 * s,  y: 26 * s,      r: 18 * s, label: '✕' },
+    ];
+  }
+  function onTouch(e) {
+    if (!running) return;
+    e.preventDefault(); e.stopPropagation();
+    const btns = touchButtons();
+    for (const t of e.changedTouches) {
+      const x = t.clientX, y = t.clientY;
+      if (e.type === 'touchstart') {
+        if (P.dead) { restart(); continue; }               // ölünce dokun → yeniden başla
+        const b = btns.find(b => Math.hypot(x - b.x, y - b.y) < b.r + 10);
+        if (b) {
+          touchOwners.set(t.identifier, b.id);
+          if (b.key) keys[b.key] = true;
+          if (b.id === 'weap') weapon = weapon % 6 + 1;
+          if (b.id === 'quit') { quit(); return; }
+        } else {
+          touchOwners.set(t.identifier, 'aim');
+          mouse.x = x; mouse.y = y; mouse.down = true;
+        }
+      } else if (e.type === 'touchmove') {
+        if (touchOwners.get(t.identifier) === 'aim') { mouse.x = x; mouse.y = y; }
+      } else { // touchend / touchcancel
+        const id = touchOwners.get(t.identifier);
+        touchOwners.delete(t.identifier);
+        if (id === 'aim') mouse.down = [...touchOwners.values()].includes('aim');
+        else { const b = btns.find(b => b.id === id); if (b && b.key) keys[b.key] = false; }
+      }
+    }
+  }
+  if (isTouch) for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel'])
+    addEventListener(ev, onTouch, { capture: true, passive: false });
+
+  function drawTouchUI() {
+    if (!isTouch) return;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const active = new Set(touchOwners.values());
+    for (const b of touchButtons()) {
+      const on = active.has(b.id) || (b.id === 'weap' && false);
+      ctx.globalAlpha = on ? .75 : .45;
+      ctx.fillStyle = b.id === 'quit' ? '#e63946' : '#1b1b2f';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = .9; ctx.lineWidth = 3; ctx.strokeStyle = on ? '#ffd166' : '#fff';
+      ctx.stroke();
+      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${Math.round(b.r * (b.label.length > 2 ? .38 : .8))}px ui-monospace, Menlo, monospace`;
+      ctx.fillText(b.label, b.x, b.y + 1);
+      if (b.id === 'weap') {
+        ctx.font = `bold ${Math.round(b.r * .34)}px ui-monospace, Menlo, monospace`; ctx.fillStyle = '#ffd166';
+        ctx.fillText(WEAPONS[weapon].name, b.x, b.y + b.r + 12);
+      }
+    }
+    ctx.globalAlpha = 1;
   }
 
   // ---------------- H) OYUN DÖNGÜSÜ ----------------
