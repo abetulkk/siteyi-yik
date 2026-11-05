@@ -56,6 +56,10 @@ app.get('/play', async (req, res) => {
     html = html.replace(/<meta[^>]+http-equiv=["']?(content-security-policy|refresh)["']?[^>]*>/gi, '');
     html = html.replace(/<base\b[^>]*>/gi, '');
 
+    // ADIM 3b: JavaScript'siz içerikleri göster. Birçok site resimlerin/yazıların
+    // "JS kapalıysa" sürümünü <noscript> içine koyar; etiketleri açınca görünür olurlar.
+    html = html.replace(/<\/?noscript[^>]*>/gi, '');
+
     // ADIM 4: <base> ekle → resimler/CSS orijinal siteden yüklenir
     //         <script> ekle → oyunumuz sayfanın içine girer
     const self = '//' + req.get('host'); // http/https otomatik

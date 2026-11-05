@@ -25,6 +25,12 @@
   style.textContent = '*{cursor:crosshair!important;user-select:none!important}';
   document.head.appendChild(style);
 
+  // Geç yüklenen (lazy) resimleri hemen yükle
+  for (const im of document.querySelectorAll('img[data-src],img[data-srcset],source[data-srcset]')) {
+    if (im.dataset.src) im.src = im.dataset.src;
+    if (im.dataset.srcset) im.srcset = im.dataset.srcset;
+  }
+
   const ctx = cv.getContext('2d');
   let W = 0, H = 0;
   function resize() {
@@ -106,8 +112,9 @@
     if (!running) return;
     const k = e.key.toLowerCase();
     keys[k] = true;
-    if (['1', '2', '3'].includes(k)) weapon = +k;
+    if (['1', '2', '3', '4', '5', '6'].includes(k)) weapon = +k;
     if (k === 'escape') quit();
+    if (k === 'r' && P.dead) restart();
     if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) e.preventDefault();
   }, true);
   addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; }, true);
@@ -128,28 +135,30 @@
 
   // ---------------- D) FİZİK ----------------
   const GRAVITY = 1800, SPEED = 280, JUMP = 680;
-  const P = { x: scrollX + W / 2, y: scrollY + 80, vx: 0, vy: 0, onGround: false, face: 1, walk: 0, fuel: 100, jumpHeld: false, flying: false, kick: 0 };
+  const P = { x: scrollX + W / 2, y: scrollY + 80, vx: 0, vy: 0, onGround: false, face: 1, walk: 0, fuel: 100, jumpHeld: false, flying: false, kick: 0, hp: 5, inv: 0, dead: false };
 
-  function landOn(prevY, newY) {
+  // x konumundaki biri prevY→newY düşerken hangi platforma basar? (oyuncu + düşmanlar)
+  function landOn(x, prevY, newY) {
     let floor = null;
     for (const b of blocks) {
       if (b.el.__dead) continue;
-      if (P.x < b.x - 4 || P.x > b.x + b.w + 4) continue;
+      if (x < b.x - 4 || x > b.x + b.w + 4) continue;
       if (prevY <= b.y + 1 && newY >= b.y && (floor === null || b.y < floor)) floor = b.y;
     }
     return floor;
   }
 
   function updatePlayer(dt) {
-    const dir = (right() ? 1 : 0) - (left() ? 1 : 0);
+    if (P.inv > 0) P.inv -= dt;
+    const dir = P.dead ? 0 : (right() ? 1 : 0) - (left() ? 1 : 0);
     P.vx += (dir * SPEED - P.vx) * Math.min(1, dt * 18); // yumuşak hızlanma
     if (dir) P.face = dir;
 
-    if (jump() && P.onGround && !P.jumpHeld) { P.vy = -JUMP; P.onGround = false; }
+    if (!P.dead && jump() && P.onGround && !P.jumpHeld) { P.vy = -JUMP; P.onGround = false; }
     P.jumpHeld = jump();
 
     P.flying = false;
-    if (jet() && P.fuel > 0) {
+    if (!P.dead && jet() && P.fuel > 0) {
       P.vy -= 2900 * dt; P.fuel -= 45 * dt; P.flying = true;
       if (P.vy < -420) P.vy = -420;
       if (Math.random() < 0.6) pixel(P.x - P.face * 10, P.y - 14, rand(-40, 40), rand(150, 300), Math.random() < .5 ? '#ffb000' : '#ff5a00', .3, 4);
@@ -162,7 +171,7 @@
 
     P.onGround = false;
     if (P.vy >= 0 && !down()) {
-      const f = landOn(prevY, P.y);
+      const f = landOn(P.x, prevY, P.y);
       if (f !== null) { P.y = f; P.vy = 0; P.onGround = true; }
     }
     if (P.y >= docH()) { P.y = docH(); P.vy = 0; P.onGround = true; }
@@ -184,7 +193,12 @@
   // ---------------- E) SİLAHLAR ----------------
   const shots = [], particles = [], debris = [], decals = [];
   let cooldown = 0, score = 0, shakeT = 0;
-  const WEAPONS = { 1: { name: 'Tabanca', rate: 0.1 }, 2: { name: 'Bomba', rate: 0.45 }, 3: { name: 'Roket', rate: 0.65 } };
+  const WEAPONS = {
+    1: { name: 'Tabanca', rate: 0.1 }, 2: { name: 'Bomba', rate: 0.45 }, 3: { name: 'Roket', rate: 0.65 },
+    4: { name: 'Pompalı', rate: 0.55 }, 5: { name: 'Lazer', rate: 99 }, 6: { name: 'Kara Delik', rate: 2.5 },
+  };
+  const singularities = [], bombs = [];
+  let laser = null, laserTick = 0;
 
   function aim() {
     const sx = P.x, sy = P.y - 26;
@@ -200,9 +214,73 @@
       for (let i = 0; i < 3; i++) pixel(t.x, t.y, c * rand(100, 300), s * rand(100, 300), '#ffe066', .08, 3);
     } else if (weapon === 2) {
       shots.push({ kind: 'grenade', x: t.x, y: t.y, vx: c * 750 + P.vx * .5, vy: s * 750 - 120, life: 1.6, rot: 0 });
-    } else {
+    } else if (weapon === 3) {
       shots.push({ kind: 'rocket', x: t.x, y: t.y, vx: c * 380, vy: s * 380, life: 3 });
       P.vx -= c * 120; // geri tepme
+    } else if (weapon === 4) {
+      // POMPALI: 8 saçma, geniş açı, kısa menzil, güçlü geri tepme
+      for (let i = 0; i < 8; i++) {
+        const a = t.a + rand(-.22, .22), v = rand(1100, 1450);
+        shots.push({ kind: 'bullet', x: t.x, y: t.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(.25, .38) });
+      }
+      for (let i = 0; i < 10; i++) pixel(t.x, t.y, c * rand(150, 450) + rand(-80, 80), s * rand(150, 450) + rand(-80, 80), i % 2 ? '#fff3a0' : '#ff8c00', .12, 4);
+      P.vx -= c * 260; if (!P.onGround) P.vy -= s * 220; shakeT = .1;
+    } else if (weapon === 6) {
+      // KARA DELİK: yavaş giden bir küre; ~1 sn sonra açılır
+      shots.push({ kind: 'hole', x: t.x, y: t.y, vx: c * 320, vy: s * 320, life: .9 });
+    }
+  }
+
+  // LAZER: basılı tuttukça ışın; yazıları yakar, resim/butonda durur, düşmanı eritir
+  function updateLaser(dt) {
+    laser = null;
+    if (P.dead || weapon !== 5 || !mouse.down) return;
+    laserTick -= dt;
+    const tick = laserTick <= 0;
+    if (tick) laserTick = .06;
+    const t = aim(), c = Math.cos(t.a), s = Math.sin(t.a);
+    let ex = t.x, ey = t.y;
+    const pts = [];
+    for (let d = 0; d < 1100; d += 6) {
+      const x = t.x + c * d, y = t.y + s * d;
+      ex = x; ey = y;
+      const en = enemyAt(x, y);
+      if (en) { if (tick) hitEnemy(en, 1, x, y); break; }
+      const b = blockAt(x, y);
+      if (b && MEDIA.test(b.el.tagName)) { if (tick) damage(b, 1, x, y); break; }
+      if (d % 12 === 0) pts.push([x, y]);
+    }
+    if (tick) knockLetters(pts, t.x, t.y, .5);
+    laser = { x1: t.x, y1: t.y, x2: ex, y2: ey };
+    pixel(ex, ey, rand(-150, 150), rand(-200, 50), Math.random() < .5 ? '#ff4d6d' : '#fff', .25, 3);
+  }
+
+  function updateSingularities(dt) {
+    for (let i = singularities.length - 1; i >= 0; i--) {
+      const g = singularities[i];
+      g.t -= dt; g.r = Math.min(170, g.r + dt * 180); g.tick -= dt; g.spin += dt * 6;
+      if (g.tick <= 0) {
+        g.tick = .12;
+        // çevredeki harfleri içeri doğru kopar (negatif kuvvet = merkeze uçar)
+        const pts = [];
+        for (let k = 0; k < 40; k++) { const a = rand(0, 6.283), d = rand(12, g.r); pts.push([g.x + Math.cos(a) * d, g.y + Math.sin(a) * d]); }
+        knockLetters(pts, g.x, g.y, -1.3);
+        for (const e of enemies) if (Math.hypot(e.x - g.x, e.y - e.h / 2 - g.y) < 50) hitEnemy(e, 1, g.x, g.y);
+      }
+      const pull = (o, k) => {
+        const dx = g.x - o.x, dy = g.y - o.y, d = Math.hypot(dx, dy) || 1;
+        if (d > g.r * 1.7) return d;
+        const a = k * 9000 / (d + 30);
+        o.vx += dx / d * a * dt; o.vy += dy / d * a * dt - GRAVITY * dt * .8;
+        return d;
+      };
+      for (let k = debris.length - 1; k >= 0; k--) { if (pull(debris[k], 1) < 16) debris.splice(k, 1); }
+      for (const e of enemies) pull({ get x() { return e.x; }, get y() { return e.y - e.h / 2; }, set vx(v) { e.vx = v; }, get vx() { return e.vx; }, set vy(v) { e.vy = v; }, get vy() { return e.vy; } }, .5);
+      for (let k = 0; k < 3; k++) {
+        const a = rand(0, 6.283), d = g.r * rand(.5, 1);
+        particles.push({ x: g.x + Math.cos(a) * d, y: g.y + Math.sin(a) * d, vx: -Math.sin(a) * 260 - Math.cos(a) * 160, vy: Math.cos(a) * 260 - Math.sin(a) * 160, color: k % 2 ? '#c77dff' : '#7b2cbf', life: .4, max: .4, size: 3, smoke: true });
+      }
+      if (g.t <= 0) { singularities.splice(i, 1); explode(g.x, g.y, 170, 9); }
     }
   }
 
@@ -215,12 +293,33 @@
         s.vx *= 1 + 2.4 * dt; s.vy *= 1 + 2.4 * dt;
         pixel(s.x, s.y, rand(-30, 30), rand(-30, 30), Math.random() < .3 ? '#ffb000' : '#9a9a9a', .5, rand(3, 6));
       }
+      if (s.kind === 'hole') {
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        pixel(s.x, s.y, rand(-40, 40), rand(-40, 40), '#9d4edd', .3, 4);
+        if (s.life <= 0) { singularities.push({ x: s.x, y: s.y, t: 3.2, r: 0, tick: 0, spin: 0 }); shots.splice(i, 1); }
+        continue;
+      }
       const nx = s.x + s.vx * dt, ny = s.y + s.vy * dt;
       const steps = Math.max(1, Math.ceil(Math.hypot(nx - s.x, ny - s.y) / 5));
       let done = false, bounced = false;
 
       for (let k = 1; k <= steps && !done && !bounced; k++) {
         const px = s.x + (nx - s.x) * k / steps, py = s.y + (ny - s.y) * k / steps;
+        // Önce düşman mı vurduk?
+        const en = enemyAt(px, py);
+        if (en) {
+          if (s.kind === 'bullet') hitEnemy(en, 1, px, py); else explode(px, py, 130, 9);
+          done = true; break;
+        }
+        // Havada uçan fırlatılmış eşyayı vurduk mu? → havada patlar
+        const bi = bombs.findIndex(t => Math.hypot(t.x - px, t.y - py) < 14);
+        if (bi >= 0) { const bb = bombs.splice(bi, 1)[0]; enemyExplode(bb.x, bb.y, 60, true); score += 5; done = true; break; }
+        const ti = thrown.findIndex(t => Math.hypot(t.x - px, t.y - py) < 18);
+        if (ti >= 0) {
+          const t = thrown.splice(ti, 1)[0];
+          for (let j = 0; j < 14; j++) pixel(t.x, t.y, rand(-250, 250), rand(-250, 250), j % 2 ? '#fff' : '#ffd000', .35, 4);
+          score += 5; done = true; break;
+        }
         const b = blockAt(px, py);
         if (!b) continue;
 
@@ -293,6 +392,10 @@
       const d = Math.hypot(cx - x, cy - y);
       if (d < radius) damage(b, Math.ceil(power * (1 - d / radius)), x, y);
     }
+    for (const e of [...enemies]) {
+      const d = Math.hypot(e.x - x, e.y - 24 - y);
+      if (d < radius) { hitEnemy(e, Math.ceil(4 * (1 - d / radius)) + 1, x, y); e.vy -= 400; }
+    }
     const pd = Math.hypot(P.x - x, P.y - 24 - y);
     if (pd < radius) {
       const f = (1 - pd / radius) * 900;
@@ -317,7 +420,7 @@
     const r = document.createRange(); r.setStart(p.offsetNode, p.offset); return r;
   }
 
-  function knockLetters(worldPts, fromX, fromY, force) {
+  function knockLetters(worldPts, fromX, fromY, force, noScore) {
     // 1. aşama: sayfayı DEĞİŞTİRMEDEN hangi harflerin vurulduğunu topla
     const found = new Map(); // textNode → Map(offset → bilgi)
     for (const [wx, wy] of worldPts) {
@@ -366,7 +469,7 @@
         count++;
       }
     }
-    score += count;
+    if (!noScore) score += count;
     return count;
   }
 
@@ -472,13 +575,13 @@
   ];
   const SCALE = 3;
 
-  function drawSprite(rows, x, y, flip) {
+  function drawSprite(rows, x, y, flip, pal = PAL, sc = SCALE) {
     for (let r = 0; r < rows.length; r++) for (let c = 0; c < rows[r].length; c++) {
-      const col = PAL[rows[r][c]];
+      const col = pal[rows[r][c]];
       if (!col) continue;
       const cx = flip ? (rows[r].length - 1 - c) : c;
       ctx.fillStyle = col;
-      ctx.fillRect(Math.round(x + cx * SCALE), Math.round(y + r * SCALE), SCALE, SCALE);
+      ctx.fillRect(Math.round(x + cx * sc), Math.round(y + r * sc), Math.ceil(sc), Math.ceil(sc));
     }
   }
 
@@ -538,16 +641,8 @@
     for (const d of debris) {
       const x = d.x - ox, y = d.y - oy;
       if (x < -50 || y < -50 || x > W + 50 || y > H + 50) continue;
-      ctx.save(); ctx.translate(x, y); ctx.rotate(d.rot);
       ctx.globalAlpha = Math.min(1, d.life);
-      if (d.type === 'letter') {
-        ctx.font = d.font; ctx.fillStyle = d.color; ctx.fillText(d.ch, 0, 0);
-      } else if (d.img) {
-        const iw = d.img.naturalWidth, ih = d.img.naturalHeight;
-        try { ctx.drawImage(d.img, d.sx * iw, d.sy * ih, d.sw * iw, d.sh * ih, -d.w / 2, -d.h / 2, d.w, d.h); }
-        catch { ctx.fillStyle = d.color; ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h); }
-      } else { ctx.fillStyle = d.color; ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h); }
-      ctx.restore();
+      drawItem(d, x, y, d.rot);
     }
     ctx.globalAlpha = 1;
 
@@ -579,26 +674,376 @@
     }
     ctx.globalAlpha = 1;
 
-    drawPlayer(ox, oy);
+    for (const g of singularities) {
+      const x = g.x - ox, y = g.y - oy;
+      ctx.globalAlpha = .18; ctx.fillStyle = '#7b2cbf';
+      ctx.beginPath(); ctx.arc(x, y, g.r, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 1;
+      const R = 16 + Math.sin(g.spin * 2) * 3;
+      for (let a = 0; a < 6.283; a += .35) {
+        ctx.fillStyle = Math.floor(a * 3 + g.spin) % 2 ? '#c77dff' : '#ff9ef5';
+        ctx.fillRect(Math.round(x + Math.cos(a + g.spin) * (R + 4) - 2), Math.round(y + Math.sin(a + g.spin) * (R + 4) - 2), 4, 4);
+      }
+      ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+    }
+    if (laser) {
+      const a = { x: laser.x1 - ox, y: laser.y1 - oy }, b = { x: laser.x2 - ox, y: laser.y2 - oy };
+      ctx.lineCap = 'butt';
+      ctx.strokeStyle = 'rgba(255,0,60,.35)'; ctx.lineWidth = 12 + Math.random() * 4;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.strokeStyle = '#ff4d6d'; ctx.lineWidth = 5;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+    }
+    for (const b of bombs) {
+      const x = b.x - ox, y = b.y - oy;
+      ctx.fillStyle = '#1b1b2f'; ctx.fillRect(Math.round(x - 5), Math.round(y - 5), 10, 10);
+      ctx.fillStyle = b.life % .2 < .1 ? '#ef233c' : '#8d99ae'; ctx.fillRect(Math.round(x - 2), Math.round(y - 2), 4, 4);
+    }
+    drawEnemies(ox, oy);
+    for (const t of thrown) drawItem(t.o, t.x - ox, t.y - oy, t.rot);
+    if (!P.dead && !(P.inv > 0 && Math.floor(P.inv * 10) % 2)) drawPlayer(ox, oy); // hasar alınca yanıp söner
     drawHUD();
+    if (P.dead) drawGameOver();
+  }
+
+  function drawItem(d, x, y, rot) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(rot || 0);
+    const k = d.big || 1;
+    if (k !== 1) ctx.scale(k, k);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    if (d.type === 'letter') {
+      ctx.font = d.font; ctx.fillStyle = d.color; ctx.fillText(d.ch, 0, 0);
+    } else if (d.img) {
+      const iw = d.img.naturalWidth, ih = d.img.naturalHeight;
+      try { ctx.drawImage(d.img, d.sx * iw, d.sy * ih, d.sw * iw, d.sh * ih, -d.w / 2, -d.h / 2, d.w, d.h); }
+      catch { ctx.fillStyle = d.color; ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h); }
+    } else { ctx.fillStyle = d.color; ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h); }
+    ctx.restore();
   }
 
   function drawHUD() {
     ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
-    ctx.fillStyle = 'rgba(20,20,35,.85)'; ctx.fillRect(10, 10, 330, 80);
+    ctx.fillStyle = 'rgba(20,20,35,.85)'; ctx.fillRect(10, 10, 360, 132);
     ctx.font = 'bold 13px ui-monospace, Menlo, monospace';
-    let x = 20;
-    for (const k of [1, 2, 3]) {
-      ctx.fillStyle = k === weapon ? '#ffd166' : '#888';
-      const label = `[${k}] ${WEAPONS[k].name}`;
-      ctx.fillText(label, x, 30); x += ctx.measureText(label).width + 12;
+    for (const row of [[1, 2, 3], [4, 5, 6]]) {
+      let x = 20; const y = row[0] === 1 ? 30 : 48;
+      for (const k of row) {
+        ctx.fillStyle = k === weapon ? '#ffd166' : '#888';
+        const label = `[${k}] ${WEAPONS[k].name}`;
+        ctx.fillText(label, x, y); x += ctx.measureText(label).width + 12;
+      }
     }
-    ctx.fillStyle = '#fff'; ctx.fillText(`Puan: ${score}`, 20, 52);
-    ctx.fillStyle = '#333'; ctx.fillRect(140, 43, 100, 10);
-    ctx.fillStyle = '#4fc3f7'; ctx.fillRect(140, 43, P.fuel, 10);
+    ctx.fillStyle = '#fff'; ctx.fillText(`Puan: ${score}`, 20, 70);
+    ctx.fillStyle = '#333'; ctx.fillRect(150, 61, 100, 10);
+    ctx.fillStyle = '#4fc3f7'; ctx.fillRect(150, 61, P.fuel, 10);
+    for (let i = 0; i < 5; i++) drawHeart(20 + i * 20, 80, i < P.hp);
     ctx.font = '11px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#bbb';
-    ctx.fillText('←→ / A D yürü · ↑ / W zıpla · ↓ / S in', 20, 70);
-    ctx.fillText('Shift jetpack · Fare nişan+ateş · ESC çık', 20, 84);
+    ctx.fillText(`Düşman: ${enemies.length}`, 130, 91);
+    ctx.fillText('←→ / A D yürü · ↑ / W zıpla · ↓ / S in', 20, 116);
+    ctx.fillText('Shift jetpack · Fare nişan+ateş · ESC çık', 20, 132);
+  }
+
+
+
+  // ---------------- I) DÜŞMANLAR ----------------
+  // Her düşman: oyuncuya yaklaşır, sayfadan bir şey koparır (harf, resim,
+  // buton ya da yerdeki parça), biraz uzaklaşıp onu oyuncuya fırlatır.
+  // Fırlatılan şey ya da düşmanın kendisi değerse oyuncu 1 kalp kaybeder.
+  const EBODY = [
+    '.K........K.',
+    '.KHK....KHK.',
+    '..KHKKKKHK..',
+    '..KHHHHHHK..',
+    '..KSSSSSSK..',
+    '..KEESSEEK..',
+    '..KSSKKSSK..',
+    '...KKKKKK...',
+    '..KJJJJJJK..',
+    '.KJJjJJjJJK.',
+    '.KSKJJJJKSK.',
+    '..KKJJJJKK..',
+    '..KJJJJJJK..',
+    '..KKKKKKKK..',
+  ];
+  // Düşman türleri:
+  //  - Fırlatıcı: sayfadan harf/resim söker, sana fırlatır
+  //  - Dev: yavaş ama çok dayanıklı; yaklaşınca üstüne koşar (2 kalp götürür), dev parçalar atar
+  //  - Drone: uçar, tepende dolaşıp bomba bırakır
+  const DRONE_A = [
+    '.PPPP..PPPP.',
+    '....KKKK....',
+    '...KMMMMK...',
+    '..KMMWWMMK..',
+    '..KMWEEWMK..',
+    '..KMMWWMMK..',
+    '...KMMMMK...',
+    '....KKKK....',
+    '.....KK.....',
+  ];
+  const DRONE_B = ['..PP....PP..', ...DRONE_A.slice(1)];
+  const TYPES = {
+    thrower: { hp: 4, speed: 170, sc: 3, dmg: 1, pals: [
+      { K: '#1b1b2f', H: '#6a4c93', S: '#9be37a', E: '#d00000', J: '#3a3a5a', j: '#262640', P: '#222', F: '#111' },
+      { K: '#1b1b2f', H: '#9d0208', S: '#c9ada7', E: '#ffd000', J: '#d62828', j: '#6a040f', P: '#333', F: '#111' },
+      { K: '#1b1b2f', H: '#f77f00', S: '#8ecae6', E: '#000000', J: '#023047', j: '#011d2e', P: '#219ebc', F: '#111' }] },
+    brute: { hp: 14, speed: 95, sc: 4.5, dmg: 2, pals: [
+      { K: '#1b1b2f', H: '#3a5a40', S: '#a3b18a', E: '#ff0000', J: '#588157', j: '#344e41', P: '#3a3a3a', F: '#111' }] },
+    drone: { hp: 3, speed: 260, sc: 3, dmg: 1, fly: true, pals: [
+      { K: '#1b1b2f', M: '#8d99ae', W: '#edf2f4', E: '#ef233c', P: '#adb5bd' }] },
+  };
+  const WHITE = new Proxy({}, { get: (_, k) => (k === '.' ? undefined : '#ffffff') });
+  const enemies = [], thrown = [];
+  const MAX_ENEMIES = 4;
+  let spawnT = 1.5, spawnCount = 0;
+
+  function pickType() {
+    const r = Math.random();
+    if (r < .3) return 'drone';
+    if (r < .5 && !enemies.some(e => e.type === 'brute')) return 'brute';
+    return 'thrower';
+  }
+
+  function spawnEnemy(type = pickType()) {
+    const T = TYPES[type];
+    const side = Math.random() < .5 ? -1 : 1;
+    let x = P.x + side * rand(250, 450);
+    if (x < 40 || x > docW() - 40) x = P.x - side * rand(250, 450);
+    x = Math.max(30, Math.min(docW() - 30, x));
+    const y = scrollY + (T.fly ? 80 : 40);
+    const body = T.fly ? DRONE_A : EBODY;
+    enemies.push({ type, x, y, vx: 0, vy: 0, onGround: false, face: -side, walk: 0, hp: T.hp, hpMax: T.hp, hurt: 0,
+      sc: T.sc, w: 12 * T.sc, h: (T.fly ? body.length : body.length + 5) * T.sc, dmg: T.dmg, speed: T.speed,
+      carry: null, grabT: rand(.5, 1.5), throwT: 0, drop: 0, jumpT: rand(1, 3), dropT: rand(1, 2), charge: 0, chargeT: 2,
+      seed: rand(0, 6), t: 0, pal: T.pals[spawnCount++ % T.pals.length] });
+    for (let i = 0; i < 24; i++) pixel(x, y, rand(-180, 180), rand(-180, 180), i % 2 ? '#c77dff' : '#fff', .5, 5);
+  }
+
+  const enemyAt = (x, y) => enemies.find(e => Math.abs(x - e.x) < e.w / 2 + 2 && y > e.y - e.h && y < e.y + 2);
+
+  function hitEnemy(e, dmg, fx, fy) {
+    if (!enemies.includes(e)) return;
+    e.hp -= dmg; e.hurt = .15;
+    e.vx += Math.sign(e.x - fx || 1) * (e.type === 'brute' ? 80 : 250);
+    for (let i = 0; i < 6; i++) pixel(e.x, e.y - e.h / 2, rand(-200, 200), rand(-250, 50), e.pal.S || e.pal.M, .3, 4);
+    if (e.hp <= 0) killEnemy(e);
+  }
+
+  function killEnemy(e) {
+    const i = enemies.indexOf(e);
+    if (i < 0) return;
+    enemies.splice(i, 1);
+    if (e.carry) dropItem(e.carry, e.x, e.y - e.h, 0, -200);
+    const cols = Object.values(e.pal);
+    for (let k = 0; k < (e.type === 'brute' ? 80 : 40); k++) {
+      pixel(e.x + rand(-e.w / 2, e.w / 2), e.y - rand(0, e.h), rand(-350, 350), rand(-450, 50), cols[k % cols.length], rand(.4, .9), rand(4, 8));
+    }
+    if (e.type === 'drone') enemyExplode(e.x, e.y - e.h / 2, 50, false);
+    score += e.type === 'brute' ? 150 : e.type === 'drone' ? 75 : 50;
+    shakeT = .15; spawnT = 3;
+  }
+
+  function hurtPlayer(n, fromX) {
+    if (P.inv > 0 || P.dead) return;
+    P.hp -= n; P.inv = 1.2; shakeT = .25;
+    P.vx += Math.sign(P.x - fromX || 1) * 380; P.vy = -320; P.onGround = false;
+    for (let i = 0; i < 16; i++) pixel(P.x, P.y - 28, rand(-250, 250), rand(-300, 50), i % 2 ? '#e63946' : '#fff', .5, 4);
+    if (P.hp <= 0) {
+      P.hp = 0; P.dead = true; mouse.down = false;
+      for (let i = 0; i < 50; i++) pixel(P.x, P.y - 28, rand(-400, 400), rand(-500, 100), [PAL.H, PAL.J, PAL.B, PAL.S][i % 4], rand(.5, 1.2), rand(4, 8));
+    }
+  }
+
+  // Düşman bombası patlaması: sayfada küçük krater + yakındaysan hasar
+  function enemyExplode(x, y, r, hurts = true) {
+    decals.push({ type: 'crater', x, y, img: makeCrater(r * .5) });
+    for (let i = 0; i < 30; i++) {
+      const a = rand(0, 6.283), v = rand(50, 380);
+      pixel(x, y, Math.cos(a) * v, Math.sin(a) * v, ['#fff3a0', '#ff8c00', '#ef233c'][i % 3], rand(.3, .6), rand(3, 7));
+    }
+    const pts = [];
+    for (let px = x - r; px <= x + r; px += 8) for (let py = y - r; py <= y + r; py += 8)
+      if (Math.hypot(px - x, py - y) < r * .8) pts.push([px, py]);
+    knockLetters(pts, x, y, 1.8, true);
+    if (hurts && Math.hypot(P.x - x, P.y - 24 - y) < r) hurtPlayer(1, x);
+    shakeT = Math.max(shakeT, .12);
+  }
+
+  function updateBombs(dt) {
+    for (let i = bombs.length - 1; i >= 0; i--) {
+      const b = bombs[i];
+      b.life -= dt; b.vy += GRAVITY * .7 * dt; b.x += b.vx * dt; b.y += b.vy * dt;
+      const hitP = !P.dead && Math.abs(b.x - P.x) < 18 && b.y > P.y - 56 && b.y < P.y;
+      if (hitP || blockAt(b.x, b.y) || b.y > docH() || b.life <= 0) { enemyExplode(b.x, b.y, 70); bombs.splice(i, 1); }
+    }
+  }
+
+  // Yakındaki bir şeyi kap: 1) yerdeki parça  2) küçük resim/buton  3) sayfadan harf sök
+  function tryGrab(e) {
+    const big = e.type === 'brute';
+    const hx = e.x + e.face * e.w / 2, hy = e.y - e.h / 2;
+    for (let i = debris.length - 1; i >= 0; i--) {
+      const d = debris[i];
+      if (Math.hypot(d.x - hx, d.y - hy) < 70 + (big ? 40 : 0)) { e.carry = debris.splice(i, 1)[0]; if (d.type === 'letter') e.carry.big = big ? 3.5 : 2.2; return; }
+    }
+    for (const b of blocks) {
+      if (b.el.__dead || b.kind !== 'solid' || b.area > (big ? 60000 : 20000)) continue;
+      const cx = Math.max(b.x, Math.min(hx, b.x + b.w)), cy = Math.max(b.y, Math.min(hy, b.y + b.h));
+      if (Math.hypot(cx - hx, cy - hy) < (big ? 80 : 50)) {
+        const cs = getComputedStyle(b.el);
+        const bg = cs.backgroundColor, hasBg = bg && bg !== 'transparent' && !/,\s*0\)$/.test(bg);
+        const img = b.el.tagName === 'IMG' && b.el.complete && b.el.naturalWidth ? b.el : null;
+        const k = Math.min(1, (big ? 100 : 60) / Math.max(b.w, b.h));
+        e.carry = { type: 'chunk', w: b.w * k, h: b.h * k, color: hasBg ? bg : cs.color, img, sx: 0, sy: 0, sw: 1, sh: 1, rot: 0 };
+        b.el.style.visibility = 'hidden'; b.el.__dead = true;
+        return;
+      }
+    }
+    for (let k = 0; k < 8; k++) {
+      const before = debris.length;
+      knockLetters([[hx + rand(-40, 40), hy + rand(-50, 30)]], hx, hy, .3, true);
+      if (debris.length > before) { e.carry = debris.pop(); e.carry.big = big ? 3.5 : 2.2; return; }
+    }
+  }
+
+  function throwAt(e) {
+    const o = e.carry; e.carry = null; e.grabT = rand(.8, 1.6);
+    const sx = e.x, sy = e.y - e.h - 8;
+    const tx = P.x + P.vx * .3, ty = P.y - 28;
+    const t = Math.max(.45, Math.min(1.1, Math.hypot(tx - sx, ty - sy) / 650));
+    const g = GRAVITY * .6;
+    thrown.push({ o, x: sx, y: sy, vx: (tx - sx) / t, vy: (ty - sy) / t - .5 * g * t, g, rot: 0, vr: rand(-10, 10), life: 3, dmg: e.dmg });
+  }
+
+  function dropItem(o, x, y, vx, vy) {
+    Object.assign(o, { x, y, vx, vy, rot: o.rot || 0, vr: rand(-6, 6), life: 3 });
+    if (debris.length < 1500) debris.push(o);
+  }
+
+  function updateDrone(e, dt, dx, adx) {
+    e.t += dt;
+    const tx = P.x + Math.sin(e.t * .9 + e.seed) * 170, ty = P.y - 200 + Math.sin(e.t * 2 + e.seed) * 25;
+    e.vx += ((tx - e.x) * 2.2 - e.vx) * Math.min(1, dt * 3);
+    e.vy += ((ty - e.y) * 2.2 - e.vy) * Math.min(1, dt * 3);
+    e.x = Math.max(12, Math.min(docW() - 12, e.x + e.vx * dt));
+    e.y = Math.max(60, e.y + e.vy * dt);
+    e.face = Math.sign(dx) || 1;
+    if (P.dead) return;
+    e.dropT -= dt;
+    if (e.dropT <= 0 && adx < 220) { e.dropT = rand(1.6, 2.6); bombs.push({ x: e.x, y: e.y + 2, vx: e.vx * .3, vy: 60, life: 3 }); }
+    if (Math.abs(P.x - e.x) < e.w / 2 + 10 && Math.abs((P.y - 28) - (e.y - e.h / 2)) < 40) hurtPlayer(1, e.x);
+  }
+
+  function updateEnemies(dt) {
+    if (!P.dead) {
+      spawnT -= dt;
+      if (enemies.length < MAX_ENEMIES && spawnT <= 0) { spawnEnemy(); spawnT = 2.5; }
+    }
+    for (const e of [...enemies]) {
+      if (e.hurt > 0) e.hurt -= dt;
+      const dx = P.x - e.x, dy = P.y - e.y, adx = Math.abs(dx);
+      if (e.type === 'drone') { updateDrone(e, dt, dx, adx); continue; }
+
+      let dir = 0, speed = e.speed;
+      if (!P.dead) {
+        if (e.carry) dir = adx < 180 ? -Math.sign(dx) : adx > 380 ? Math.sign(dx) : 0; // mesafe koru
+        else dir = Math.sign(dx);                                                     // yaklaş
+      }
+      // Dev: yakındaysa üstüne koşar
+      if (e.type === 'brute' && !P.dead) {
+        e.chargeT -= dt;
+        if (!e.carry && adx < 320 && e.onGround && e.chargeT <= 0) { e.charge = .7; e.chargeT = 3.5; }
+        if (e.charge > 0) {
+          e.charge -= dt; dir = Math.sign(dx); speed = 440;
+          if (Math.random() < .5) pixel(e.x - dir * 20, e.y - 4, -dir * rand(50, 150), rand(-80, -20), '#bbb', .4, 5, true);
+        }
+      }
+      e.face = dir || Math.sign(dx) || 1;
+      e.vx += (dir * speed - e.vx) * Math.min(1, dt * 8);
+
+      e.jumpT -= dt;
+      if (e.onGround && !P.dead && ((dy < -70 && e.jumpT <= 0) || Math.random() < dt * .15)) {
+        e.vy = -rand(600, 720); e.onGround = false; e.jumpT = rand(.8, 2);
+      }
+      if (e.onGround && dy > 90 && Math.random() < dt * .8) e.drop = .25;
+      if (e.drop > 0) e.drop -= dt;
+
+      e.vy = Math.min(1400, e.vy + GRAVITY * dt);
+      const prevY = e.y;
+      e.x = Math.max(12, Math.min(docW() - 12, e.x + e.vx * dt));
+      e.y += e.vy * dt;
+      e.onGround = false;
+      if (e.vy >= 0 && e.drop <= 0) {
+        const f = landOn(e.x, prevY, e.y);
+        if (f !== null) { e.y = f; e.vy = 0; e.onGround = true; if (e.type === 'brute' && prevY < f - 30) shakeT = Math.max(shakeT, .08); }
+      }
+      if (e.y >= docH()) { e.y = docH(); e.vy = 0; e.onGround = true; }
+      if (e.onGround && Math.abs(e.vx) > 20) e.walk += dt * (e.type === 'brute' ? 6 : 9);
+
+      if (P.dead) continue;
+      if (!e.carry) {
+        e.grabT -= dt;
+        if (e.grabT <= 0) { e.grabT = .4; tryGrab(e); if (e.carry) e.throwT = rand(.6, 1.2); }
+      } else {
+        e.throwT -= dt;
+        if (e.throwT <= 0 && adx < 700) throwAt(e);
+      }
+      if (Math.abs(P.x - e.x) < e.w / 2 + 12 && P.y > e.y - e.h && P.y - 56 < e.y) hurtPlayer(e.dmg, e.x);
+    }
+  }
+
+  function updateThrown(dt) {
+    for (let i = thrown.length - 1; i >= 0; i--) {
+      const t = thrown[i];
+      t.life -= dt; t.vy += t.g * dt; t.x += t.vx * dt; t.y += t.vy * dt; t.rot += t.vr * dt;
+      if (!P.dead && Math.abs(t.x - P.x) < 20 && t.y > P.y - 58 && t.y < P.y + 4) {
+        hurtPlayer(t.dmg || 1, t.x);
+        dropItem(t.o, t.x, t.y, -t.vx * .2, -200);
+        thrown.splice(i, 1); continue;
+      }
+      if (t.y > docH() || t.life <= 0) { dropItem(t.o, t.x, t.y, t.vx * .2, -150); thrown.splice(i, 1); }
+    }
+  }
+
+  function drawEnemies(ox, oy) {
+    for (const e of enemies) {
+      const x = e.x - ox - e.w / 2, top = e.y - oy - e.h;
+      const flip = e.face < 0;
+      const pal = e.hurt > 0 ? WHITE : e.pal;
+      if (e.type === 'drone') {
+        drawSprite(Math.floor(performance.now() / 60) % 2 ? DRONE_A : DRONE_B, x, top, flip, pal, e.sc);
+      } else {
+        const leg = !e.onGround ? 1 : Math.abs(e.vx) > 20 ? 1 + (Math.floor(e.walk) % 2) : 0;
+        drawSprite(EBODY, x, top, flip, pal, e.sc);
+        drawSprite(LEGS[leg], x, top + EBODY.length * e.sc, flip, pal, e.sc);
+        if (e.carry) drawItem(e.carry, e.x - ox, top - 14 + Math.sin(performance.now() / 120) * 2, 0);
+      }
+      ctx.fillStyle = '#1b1b2f'; ctx.fillRect(e.x - ox - 14, top - 6, 28, 4);
+      ctx.fillStyle = '#e63946'; ctx.fillRect(e.x - ox - 13, top - 5, 26 * Math.max(0, e.hp) / e.hpMax, 2);
+    }
+  }
+
+  const HEART = ['.KK.KK.', 'KRRKRRK', 'KRRRRRK', '.KRRRK.', '..KRK..', '...K...'];
+  function drawHeart(x, y, full) {
+    drawSprite(HEART, x, y, false, { K: '#1b1b2f', R: full ? '#e63946' : '#444' });
+  }
+
+  function drawGameOver() {
+    ctx.fillStyle = 'rgba(10,10,25,.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = 'bold 56px ui-monospace, Menlo, monospace';
+    ctx.fillStyle = '#1b1b2f'; ctx.fillText('KAYBETTİN!', W / 2 + 4, H / 2 - 36);
+    ctx.fillStyle = '#e63946'; ctx.fillText('KAYBETTİN!', W / 2, H / 2 - 40);
+    ctx.font = 'bold 20px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#ffd166';
+    ctx.fillText(`Puan: ${score}`, W / 2, H / 2 + 10);
+    ctx.fillStyle = '#fff'; ctx.font = '16px ui-monospace, Menlo, monospace';
+    ctx.fillText('Yeniden başlamak için R tuşuna bas', W / 2, H / 2 + 44);
+  }
+
+  function restart() {
+    Object.assign(P, { hp: 5, dead: false, inv: 1.5, x: scrollX + W / 2, y: scrollY + 80, vx: 0, vy: 0, fuel: 100 });
+    enemies.length = 0; thrown.length = 0; bombs.length = 0; singularities.length = 0; spawnT = 1.5; score = 0;
   }
 
   // ---------------- H) OYUN DÖNGÜSÜ ----------------
@@ -607,9 +1052,14 @@
     if (!running) return;
     const dt = Math.min(.033, (now - last) / 1000); last = now;
     cooldown -= dt;
-    if (mouse.down && cooldown <= 0) { fire(); cooldown = WEAPONS[weapon].rate; }
+    if (!P.dead && weapon !== 5 && mouse.down && cooldown <= 0) { fire(); cooldown = WEAPONS[weapon].rate; }
     updatePlayer(dt);
     updateShots(dt);
+    updateLaser(dt);
+    updateSingularities(dt);
+    updateBombs(dt);
+    updateEnemies(dt);
+    updateThrown(dt);
     updateEffects(dt);
     updateCamera();
     draw();
